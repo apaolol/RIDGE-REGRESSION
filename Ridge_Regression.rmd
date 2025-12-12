@@ -1,0 +1,289 @@
+---
+title: "Untitled"
+author: "Bautro's Angels"
+date: "2025-12-08"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+#===========================================
+# 1. Load Packages
+#===========================================
+library(tidyverse)
+library(glmnet)
+```
+
+# lain nasad
+
+<https://www.kaggle.com/datasets/wasiqaliyasir/breast-cancer-dataset>
+
+```{r}
+# Load libraries
+library(tidyverse)
+library(car)
+library(corrplot)
+
+# Load dataset
+df <- read.csv("Breast_cancer_dataset.csv")
+
+# Automatically detect numeric columns
+numeric_cols <- df %>% select(where(is.numeric)) %>% colnames()
+
+# Choose response (first numeric column for example)
+response <- numeric_cols[1]
+predictors <- setdiff(numeric_cols, response)
+
+
+
+# Fit OLS
+formula_ols <- as.formula(paste(response, "~", paste(predictors, collapse="+")))
+ols_breast <- lm(formula_ols, data=df)
+summary(ols_breast)
+
+
+
+# Diagnostic plots
+par(mfrow=c(2,2))
+plot(ols_breast)
+par(mfrow=c(1,1))
+
+```
+
+\
+The diagnosis variable is not included as a predictor in the OLS model because it is a categorical outcome indicating whether the tumor is malignant or benign. Although it can be converted to numeric for analytical purposes, it is still the clinical end point rather than an explanatory feature. OLS is designed for continuous responses and is not appropriate for a binary outcome, so the diagnosis variable should not be treated as a predictor or as the response in a linear regression framework. It is instead reserved as the target variable for a separate logistic regression model where a binary outcome is correctly handled.
+
+```{r}
+# Get VIF values
+vif_values <- vif(ols_breast)
+
+# Pretty print as data frame
+vif_df <- data.frame(
+  Predictor = names(vif_values),
+  VIF = round(vif_values, 3)
+)
+
+# Print nicely
+print(vif_df, row.names = FALSE)
+
+```
+
+```{r}
+# Load required libraries
+library(ggplot2)
+library(reshape2)
+
+# Compute correlation matrix
+cor_mat <- cor(df[, predictors], use = "pairwise.complete.obs")
+
+# Melt correlation matrix into long format
+cor_df <- melt(cor_mat)
+
+# Plot heatmap
+ggplot(cor_df, aes(x = Var1, y = Var2, fill = value)) +
+  geom_tile(color = "white") +
+  geom_text(aes(label = round(value, 2)), size = 2) +
+  scale_fill_gradient2(low = "blue", high = "red", mid = "white",
+                       midpoint = 0, limit = c(-1, 1), space = "Lab",
+                       name = "Correlation") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1),
+        axis.text.y = element_text(size = 8),
+        axis.text.x.top = element_text(size = 8)) +
+  labs(title = "Correlation Heatmap of Breast Cancer Predictors",
+       x = "Predictors", y = "Predictors")
+
+# Highlight high correlations (|r| > 0.7)
+threshold <- 0.7
+high_cor <- which(abs(cor_mat) > threshold & abs(cor_mat) < 1, arr.ind = TRUE)
+
+# Add rectangles around high correlations
+for (i in 1:nrow(high_cor)) {
+  print(paste("High correlation between:",
+              rownames(cor_mat)[high_cor[i,1]],
+              "and",
+              colnames(cor_mat)[high_cor[i,2]],
+              "=", round(cor_mat[high_cor[i,1], high_cor[i,2]], 2)))
+}
+
+```
+
+```{r}
+# Compute correlation matrix
+cor_mat2 <- cor(df[, predictors], use = "pairwise.complete.obs")
+
+# Set threshold for "high correlation"
+threshold <- 0.7
+
+# Find pairs above threshold (ignoring self-correlation)
+high_cor <- which(abs(cor_mat2) > threshold & abs(cor_mat2) < 1, arr.ind = TRUE)
+
+# Convert to a readable data frame
+high_cor_df <- data.frame(
+  Predictor1 = rownames(cor_mat2)[high_cor[,1]],
+  Predictor2 = colnames(cor_mat2)[high_cor[,2]],
+  Correlation = cor_mat2[high_cor]
+)
+
+# Remove duplicate pairs (A-B and B-A)
+high_cor_df <- high_cor_df[!duplicated(t(apply(high_cor_df[,1:2], 1, sort))), ]
+
+# Round correlation
+high_cor_df$Correlation <- round(high_cor_df$Correlation, 2)
+
+# Print
+print(high_cor_df)
+
+```
+
+choose predictors which are viable for predictive modelling, don't simply aim for high correlation. since that might lead to redundant predictors which is why some are severely correlated.
+
+```{r}
+library(car)
+library(ggplot2)
+library(corrplot)
+
+# Selected predictors (highly correlated but not fully redundant)
+predictors <- c("radius_mean", "radius_worst",
+                "concavity_mean", "concave.points_worst",
+                "compactness_mean",
+                "fractal_dimension_mean")
+
+# Fit OLS model
+ols_selected <- lm(radius_mean ~ radius_worst + concavity_mean + concave.points_worst +
+                     compactness_mean + fractal_dimension_mean,
+                   data = df)
+
+# Summary of OLS
+summary(ols_selected)
+
+# VIF to check multicollinearity
+vif_values <- vif(ols_selected)
+vif_df <- data.frame(Predictor = names(vif_values), VIF = round(vif_values, 2))
+print(vif_df)
+
+# Diagnostic plots
+par(mfrow = c(2, 2))
+plot(ols_selected)
+
+
+
+```
+
+good clear case multicollienairty
+
+```{r}
+# Compute correlation matrix
+cor_mat <- cor(df[, predictors], use = "pairwise.complete.obs")
+
+# Load corrplot if not already loaded
+library(corrplot)
+
+# Create a prettier correlation plot
+corrplot(cor_mat, 
+         method = "color",           # Fill squares with colors
+         type = "full",             # Show only upper triangle
+         addCoef.col = "black",      # Add correlation coefficients in black
+         number.cex = 1,             # Make numbers bigger
+         tl.cex = 1,                 # Make variable labels bigger
+         tl.srt = 45,                # Rotate labels 45 degrees
+         tl.col = "black",           # Label color
+         diag = TRUE,               # Hide diagonal if desired
+         col = colorRampPalette(c("darkblue", "white", "darkred"))(200),  # Better color gradient
+         mar = c(0,0,1,0))           # Adjust margins for clarity
+
+
+```
+
+# TRY 2 FIT AND COMPARE RIDGE
+
+```{r}
+library(glmnet)
+
+# Prepare predictor matrix and response for Ridge (same predictors as OLS)
+X <- as.matrix(df[, c("radius_worst", "concavity_mean", "concave.points_worst",
+                      "compactness_mean", "fractal_dimension_mean")])
+y <- df$radius_mean
+
+# 10-fold cross-validated Ridge regression
+set.seed(123)
+cv_ridge <- cv.glmnet(X, y, alpha = 0, standardize = TRUE)
+
+# Best lambda
+best_lambda <- cv_ridge$lambda.min
+best_lambda
+
+# Fit Ridge with best lambda
+ridge_selected <- glmnet(X, y, alpha = 0, lambda = best_lambda, standardize = TRUE)
+
+# Coefficients at best lambda
+ridge_coef <- as.vector(coef(ridge_selected))
+names(ridge_coef) <- rownames(coef(ridge_selected))
+ridge_coef
+
+
+
+```
+
+```{r}
+plot(cv_ridge$glmnet.fit, xvar = "lambda")
+kappa(X)
+
+```
+
+comapre
+
+```{r}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+
+# OLS coefficients
+ols_coef <- coef(ols_selected)
+
+# Ridge coefficients (aligned to OLS predictors)
+all_names <- names(ols_coef)
+ridge_coef_aligned <- ridge_coef[all_names]
+
+# Comparison table
+comparison <- data.frame(
+  Predictor = all_names,
+  OLS = round(ols_coef, 3),
+  Ridge = round(ridge_coef_aligned, 3)
+)
+
+print(comparison)
+
+
+# Convert to long format for plotting
+comparison_long <- comparison %>%
+  pivot_longer(cols = c("OLS", "Ridge"), 
+               names_to = "Model", 
+               values_to = "Coefficient")
+
+# Bar plot with individual scaling for each predictor
+ggplot(comparison_long, aes(x = Model, y = Coefficient, fill = Model)) +
+  geom_bar(stat = "identity") +
+  facet_wrap(~ Predictor, scales = "free_y") +  # Each predictor gets its own scale
+  theme_minimal() +
+  labs(title = "OLS vs Ridge Coefficients Comparison (Individual Scaling)",
+       x = "Model",
+       y = "Coefficient") +
+  scale_fill_manual(values = c("OLS" = "#1f77b4", "Ridge" = "#ff7f0e")) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+```
+
+The comparison shows how Ridge regression shrinks extreme OLS coefficients toward zero, especially for highly correlated predictors:
+
+Intercept slightly increased in Ridge.
+
+Moderate coefficients like radius_worst, concavity_mean, and compactness_mean are reduced but retain their direction.
+
+Highly variable coefficients like concave.points_worst and fractal_dimension_mean see substantial shrinkage, with concave.points_worst even changing sign and fractal_dimension_mean remaining large but slightly more negative.
+
+Interpretation: Ridge stabilizes coefficient estimates in the presence of multicollinearity, reducing extreme OLS values while keeping all predictors in the model, which is useful for prediction without dropping variables.
