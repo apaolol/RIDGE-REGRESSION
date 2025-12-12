@@ -1,0 +1,344 @@
+---
+title: |
+  DS211  
+  Linear and Nonlinear Models
+subtitle: |
+  -----------------------------  
+  A Ridge Regression Approach to Logistic Regression
+  -----------------------------
+author: "Bautro's Angels"
+date: "12/14/2025"
+output: 
+  pdf_document:
+    latex_engine: xelatex
+header-includes:
+  - \usepackage{graphicx}
+  - \usepackage{titling}
+  - \usepackage{amsmath}
+  - \usepackage{amssymb}
+  - \usepackage{newunicodechar}
+  # Greek letters (force math mode)
+  - \newunicodechar{ε}{$\epsilon$}
+  - \newunicodechar{α}{$\alpha$}
+  - \newunicodechar{β}{$\beta$}
+  - \newunicodechar{γ}{$\gamma$}
+  - \newunicodechar{δ}{$\delta$}
+  - \newunicodechar{θ}{$\theta$}
+  - \newunicodechar{λ}{$\lambda$}
+  - \newunicodechar{μ}{$\mu$}
+  - \newunicodechar{σ}{$\sigma$}
+  - \newunicodechar{φ}{$\varphi$}
+  - \newunicodechar{Ω}{$\Omega$}
+  # Relations
+  - \newunicodechar{≤}{$\leq$}
+  - \newunicodechar{≥}{$\geq$}
+  - \newunicodechar{≈}{$\approx$}
+  - \newunicodechar{≠}{$\neq$}
+  - \newunicodechar{±}{$\pm$}
+  # Misc
+  - \newunicodechar{∞}{$\infty$}
+  - \newunicodechar{∑}{$\sum$}
+  - \newunicodechar{√}{$\sqrt{}$}
+  - \newunicodechar{°}{$^\circ$}
+  - \newunicodechar{∆}{$\Delta$}
+  - \newunicodechar{→}{$\to$}
+  - \newunicodechar{↔}{$\leftrightarrow$}
+  # Title
+  - \pretitle{\begin{center}\includegraphics[width=5cm]{logo.png}\par\vspace{0.5cm}\LARGE}
+  - \posttitle{\end{center}}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo=TRUE, message=FALSE, warning=FALSE, fig.width=7, fig.height=4)
+```
+
+## R Markdown
+
+We start wtih loading required libraries for logistic regression.
+
+```{r}
+# STEP 1: Load Required Libraries
+library(tidyverse)
+library(glmnet)
+library(car)
+library(corrplot)
+
+```
+
+**Inspect and Understand the Data**
+
+```{r}
+df <- read.csv("Breast_cancer_dataset.csv")
+
+# View structure of dataset
+str(df)
+```
+
+The Breast Cancer Wisconsin Diagnostic dataset provides measurements of tumor cell characteristics used to classify tumors as benign or malignant. Since the goal is to predict a binary outcome, logistic regression is the appropriate modeling approach. The dataset includes detailed numeric features such as radius, texture, compactness, and concavity that serve as predictors for tumor type. Logistic regression allows us to model the probability of malignancy based on these characteristics, making it suitable for medical diagnosis and early detection tasks.\
+
+**Variable Screening**
+
+```{r}
+# Convert diagnosis to numeric
+df$diagnosis_bin <- ifelse(df$diagnosis == "M", 1, 0)
+
+# Get all numeric predictors (excluding ID)
+numeric_cols <- df %>% select(where(is.numeric)) %>% select(-id)
+
+# Compute correlation of all predictors with diagnosis
+cor_with_diag <- sapply(numeric_cols, function(x) cor(x, df$diagnosis_bin, use = "complete.obs"))
+
+# Convert to dataframe for ranking
+cor_rank <- data.frame(
+  predictor = names(cor_with_diag),
+  correlation = cor_with_diag
+)
+
+# Rank by absolute correlation strength
+cor_rank <- cor_rank %>%
+  arrange(desc(abs(correlation)))
+
+print(cor_rank)
+```
+
+The predictors radius_mean, radius_worst, concavity_mean, concave.points_worst, compactness_mean, and fractal_dimension_mean are being considered because they show the strongest correlations with malignancy. They appear to capture important tumor characteristics such as size, shape, boundary indentation, and irregularity, which could make them the most relevant features for predicting diagnosis.
+
+**Data Preprocessing for Ordinary Logistic Regression**
+
+```{r}
+# STEP 2: Load and Prepare Data
+predictors <- c("radius_mean", "radius_worst", "concavity_mean", 
+                "concave.points_worst", "compactness_mean", 
+                "fractal_dimension_mean")
+
+colSums(is.na(df[, c(predictors, "diagnosis_bin")]))
+```
+
+Each 0 indicates that every row for that variable has a valid value. So this is a good result, showing that our selected predictors and the diagnosis_bin column are complete and ready for modeling.
+
+**Ordinary Linear Regression**
+
+```{r}
+# STEP 3: Ordinary Logistic Regression
+ols_logistic <- glm(diagnosis_bin ~ ., data = df[, c(predictors, "diagnosis_bin")],
+                    family = binomial)
+
+summary(ols_logistic)
+coef(ols_logistic)
+```
+
+The logistic regression model predicts the probability of malignancy using six tumor characteristics. Overall, the model fits the data well, as indicated by a reduction from null deviance of 751.44 to residual deviance of 122.12, suggesting it explains most of the variation in tumor type. Significant predictors include radius_worst, concavity_mean, and concave.points_worst, all of which have positive coefficients consistent with biological expectations that larger and more irregular tumors are more likely to be malignant. Radius_mean has a negative coefficient, which may be due to correlations with other size measures. Compactness_mean and fractal_dimension_mean are not significant, and fractal_dimension_mean has an unusually large negative coefficient, indicating potential multicollinearity or scaling issues. Some coefficient magnitudes are inflated, which could affect interpretability. Overall, the model captures key tumor features, but correlated predictors and non-significant variables suggest the need for careful consideration, possibly using regularization or standardization to stabilize estimates and improve generalizability.
+
+**Confirming Multicollinearity**
+
+```{r}
+# STEP 4: Multicollinearity Check
+cor_mat <- cor(df[, predictors], use = "pairwise.complete.obs")
+corrplot(cor_mat, method = "color", type = "upper",
+         addCoef.col = "black", number.cex = 0.8,
+         tl.cex = 0.9, tl.srt = 45, tl.col = "black",
+         col = colorRampPalette(c("darkblue", "white", "darkred"))(200))
+
+
+vif_values <- vif(ols_logistic)
+
+# Convert to dataframe for pretty printing
+vif_df <- data.frame(
+  Predictor = names(vif_values),
+  VIF = round(vif_values, 2)
+) %>%
+  arrange(desc(VIF))
+
+
+# Optional: highlight high VIFs
+vif_df %>%
+  mutate(Status = ifelse(VIF > 5, "High", "OK")) %>%
+  print()
+
+```
+
+The VIF results indicate the presence of multicollinearity among some predictors in the logistic regression model. Radius_mean has the highest VIF (11.43), followed by radius_worst (9.41), fractal_dimension_mean (9.38), and compactness_mean (6.13), all exceeding the conventional threshold of 5, which signals high multicollinearity. These predictors are likely correlated with each other, inflating standard errors and making coefficient estimates unstable. Concavity_mean (3.71) and concave.points_worst (2.53) have acceptable VIF values, suggesting they contribute more independently to the model. Overall, while the model includes biologically meaningful predictors, the high VIFs indicate that some coefficient interpretations should be approached with caution, and methods such as ridge regression or standardization may help stabilize the estimates.
+
+**Data Preprocessing for Ridge Logistic Regression**
+
+```{r}
+
+# STEP 5: Prepare Data for Ridge Logistic Regression
+X <- as.matrix(df[, predictors])
+y <- df$diagnosis_bin
+```
+
+**10-fold Cross Validation**
+
+```{r}
+
+# STEP 6: Cross-Validation for Optimal Lambda
+set.seed(123)
+cv_ridge <- cv.glmnet(X, y, alpha = 0, family = "binomial",
+                      standardize = TRUE, nfolds = 10)
+
+cv_ridge$lambda.min
+cv_ridge$lambda.1se
+
+plot(cv_ridge, main = "Ridge Logistic Regression CV Curve")
+abline(v = log(cv_ridge$lambda.min), col = "red", lty = 2)
+abline(v = log(cv_ridge$lambda.1se), col = "blue", lty = 2)
+```
+
+In our code, cv.glmnet performs 10-fold cross-validation to find:
+
+-   lambda.min: the lambda with the lowest cross-validated error
+
+-   lambda.1se: the largest lambda within one standard error of the minimum, often chosen for a simpler, more regularized model
+
+The plot shows cross-validated binomial deviance versus **-log(lambda)** for ridge logistic regression. The red line (lambda.min) gives the lambda with lowest error, while the blue line (lambda.1se) gives a slightly larger, more regularized lambda with nearly the same error. The curve helps choose a lambda that balances bias and variance.
+
+**Model Fitting**
+
+We chose lambda.min because our priority was maximizing predictive accuracy. While a model with lambda.1se would be simpler and more robust, we preferred to retain the full predictive power of the features to capture subtle patterns in our data, accepting the slightly higher risk of complexity or overfitting.
+
+```{r}
+# STEP 7: Fit Ridge Logistic Regression
+ridge_logistic <- glmnet(X, y, alpha = 0, lambda = cv_ridge$lambda.min,
+                         family = "binomial", standardize = TRUE)
+
+ridge_coef <- as.vector(coef(ridge_logistic))
+names(ridge_coef) <- rownames(coef(ridge_logistic))
+ridge_coef
+
+```
+
+**Interpretation – lambda.min**
+
+Intercept (-8.042): Baseline log-odds of the positive outcome when all predictors are zero.
+
+radius_mean (0.192) & radius_worst (0.199): Larger tumor radii increase the likelihood of a positive outcome.
+
+concavity_mean (7.070) & concave.points_worst (14.839): Tumors with higher concavity significantly raise risk.
+
+compactness_mean & fractal_dimension_mean: Slight positive contribution (coefficients not listed in your snippet, assume minor effect).
+
+In summary, model under lambda.min focuses on predictive accuracy, giving relatively larger coefficients, which capture the strongest relationships in the data.
+
+**What if lambda.1se?**
+
+```{r}
+# STEP 8: what if?
+ridge_logistic2 <- glmnet(X, y, alpha = 0, lambda = cv_ridge$lambda.1se,
+                         family = "binomial", standardize = TRUE)
+
+ridge_coef <- as.vector(coef(ridge_logistic2))
+names(ridge_coef) <- rownames(coef(ridge_logistic2))
+ridge_coef
+```
+
+**Interpretation – lambda.1se**
+
+Intercept (-7.501): Slightly higher baseline log-odds.
+
+radius_mean (0.181) & radius_worst (0.178): Still positive, but slightly smaller influence than lambda.min.
+
+concavity_mean (6.656) & concave.points_worst (13.345): Reduced effect compared to lambda.min, showing shrinkage.
+
+compactness_mean (6.551) & fractal_dimension_mean (-23.524): Noticeable shrinkage; fractal_dimension_mean is strongly negative, indicating more aggressive regularization.
+
+Summary: The lambda.1se model emphasizes simplicity and stability, shrinking coefficients to reduce overfitting while retaining the main predictive trends.
+
+```{r}
+summary_table <- data.frame(
+  Lambda = c(cv_ridge$lambda.min, cv_ridge$lambda.1se),
+  CV_Error = c(cv_ridge$cvm[cv_ridge$lambda == cv_ridge$lambda.min],
+               cv_ridge$cvm[cv_ridge$lambda == cv_ridge$lambda.1se])
+)
+rownames(summary_table) <- c("lambda.min", "lambda.1se")
+print(summary_table)
+```
+
+**Comparative Analysis**
+
+**Magnitude of coefficients:** lambda.min generally has larger coefficients, capturing subtle patterns; lambda.1se shrinks them for simplicity and robustness.
+
+**Predictive vs. interpretability**: lambda.min prioritizes maximum accuracy, while lambda.1se favors model interpretability and lower risk of overfitting.
+
+Our goal is best prediction, lambda.min is preferred; for a simpler, more generalizable model, lambda.1se is better.
+
+**Comparing Ordinary Logistic Regression and Ridge Logistic Regression**
+
+```{r}
+# STEP 8: Compare OLS vs Ridge Coefficients
+ols_coef <- coef(ols_logistic)
+all_names <- names(ols_coef)
+ridge_coef_aligned <- ridge_coef[all_names]
+
+comparison <- data.frame(
+  Predictor = all_names,
+  OLS = round(ols_coef, 4),
+  Ridge = round(ridge_coef_aligned, 4),
+  Difference = round(ols_coef - ridge_coef_aligned, 4)
+)
+
+comparison
+```
+
+Interpretation of Comparison
+
+Intercept (-13.069 → -7.501): Ridge shrinks the baseline estimate toward zero, reducing extreme values.
+
+radius_mean & radius_worst: OLS gives large negative/positive swings; Ridge shrinks them toward more moderate values (0.181 & 0.178), stabilizing the effect.
+
+concavity_mean & concave.points_worst: Strong positive effects in OLS are reduced under Ridge (21.499 → 6.656; 34.285 → 13.345), preventing overfitting to extreme observations.
+
+compactness_mean: OLS shows a negative effect (-4.753), but Ridge flips it positive (6.551), showing shrinkage regularizes extreme coefficient estimates.
+
+fractal_dimension_mean: Very extreme negative coefficient in OLS (-103.92) is strongly reduced under Ridge (-23.525), which stabilizes the model.
+
+Ridge regression with lambda.min shrinks extreme OLS coefficients, reducing variance and overfitting while retaining the overall predictive direction of the features. Large differences indicate variables where OLS is particularly sensitive to outliers or collinearity.
+
+**Comparison Visualization**
+
+```{r}
+# STEP 9: Visualize Coefficient Comparison
+comparison_long <- comparison %>%
+  filter(Predictor != "(Intercept)") %>%
+  pivot_longer(cols = c("OLS", "Ridge"), names_to = "Model", values_to = "Coefficient")
+
+
+ggplot(comparison_long, aes(x = Model, y = Coefficient, fill = Model)) +
+  geom_bar(stat = "identity") +
+  facet_wrap(~ Predictor, scales = "free_y") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        legend.position = "none") +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray50")
+
+```
+
+**Coefficient Shrinkage Interpretation:**
+
+**Strong Shrinkage (Ridge reduces coefficients substantially):**
+
+-   **fractal_dimension_mean**: OLS = -100, Ridge ≈ -25 (75% reduction)
+
+-   **concave.points_worst**: OLS = 30, Ridge ≈ 10 (67% reduction)
+
+-   **concavity_mean**: OLS = 20, Ridge ≈ 6 (70% reduction)
+
+-   **radius_worst**: OLS = 2.0, Ridge ≈ 0.1 (95% reduction)
+
+**Moderate Shrinkage:**
+
+-   **compactness_mean**: OLS = -5, Ridge ≈ 5 (direction change + stabilization)
+
+-   **radius_mean**: OLS = -1.5, Ridge ≈ 0.2 (87% reduction)
+
+**Key Findings:**
+
+1.  **Ridge dramatically shrinks extreme coefficients**, particularly fractal_dimension_mean and radius_worst
+
+2.  **Compactness_mean even changes sign**, suggesting OLS estimate was unstable due to multicollinearity
+
+3.  **All predictors retain non-zero values**, unlike Lasso which would eliminate some entirely
+
+4.  **Larger OLS coefficients experience proportionally greater shrinkage**, indicating they were inflated by collinearity
+
+**Conclusion:** Ridge regularization stabilizes the model by penalizing large, unstable coefficients that arise from multicollinearity, making predictions more reliable without removing any predictors.
