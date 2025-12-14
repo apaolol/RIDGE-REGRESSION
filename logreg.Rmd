@@ -180,7 +180,7 @@ cv_ridge <- cv.glmnet(X, y, alpha = 0, family = "binomial",
 cv_ridge$lambda.min
 cv_ridge$lambda.1se
 
-plot(cv_ridge, main = "Ridge Logistic Regression CV Curve")
+plot(cv_ridge)
 abline(v = log(cv_ridge$lambda.min), col = "red", lty = 2)
 abline(v = log(cv_ridge$lambda.1se), col = "blue", lty = 2)
 ```
@@ -342,3 +342,40 @@ ggplot(comparison_long, aes(x = Model, y = Coefficient, fill = Model)) +
 4.  **Larger OLS coefficients experience proportionally greater shrinkage**, indicating they were inflated by collinearity
 
 **Conclusion:** Ridge regularization stabilizes the model by penalizing large, unstable coefficients that arise from multicollinearity, making predictions more reliable without removing any predictors.
+
+**Overfitting Evaluation**
+
+```{r}
+# Training deviance at lambda.min
+train_pred <- predict(ridge_logistic, X, type = "response")
+train_logloss <- -mean(y * log(train_pred) + (1 - y) * log(1 - train_pred))
+
+# Cross-validated deviance at lambda.min
+cv_logloss <- min(cv_ridge$cvm)
+
+train_logloss
+cv_logloss
+```
+
+The training log loss is 0.181, which reflects how well the Ridge model fits the data it was trained on.
+
+The cross-validated log loss is 0.367, which estimates performance on unseen data using 10-fold cross-validation.
+
+The higher cross-validated loss is expected and indicates that the model does not memorize the training data.
+
+The gap between training and validation loss is moderate and suggests controlled variance rather than severe overfitting.
+
+Conclusion: The model generalizes reasonably well and shows no strong evidence of overfitting.
+
+```{r}
+cv_ridge$cvm[cv_ridge$lambda == cv_ridge$lambda.min]
+cv_ridge$cvm[cv_ridge$lambda == cv_ridge$lambda.1se]
+```
+
+The cross-validated loss at lambda.min is 0.3665, the lowest achievable error.
+
+The loss at lambda.1se is 0.3861, which is slightly higher but very close.
+
+This small difference indicates that the model is stable across different regularization strengths.
+
+Conclusion: Choosing lambda.min is justified for prediction, while lambda.1se would be acceptable for a more conservative model.
