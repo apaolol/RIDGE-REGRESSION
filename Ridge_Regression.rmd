@@ -1,5 +1,5 @@
 ---
-title: "Untitled"
+title: "Ridge Reg"
 author: "Bautro's Angels"
 date: "2025-12-08"
 output: pdf_document
